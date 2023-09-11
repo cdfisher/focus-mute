@@ -12,6 +12,10 @@ Includes options to affect music, sound effects, and area sounds individually.
 
 Turning off the plugin, logging out, then logging back in before (optionally) re-enabling the plugin should resolve this.
 
+**I turned on the plugin and the game is muted when focused and unmuted when unfocused.**
+
+Clicking between the client and another window one or two times should fix this. Otherwise, try restarting the plugin or relogging.
+
 **Music doesn't resume seamlessly if I click back to the game.**
 
 Setting music volume to 0 causes the current song to stop, and unfortunately the game doesn't start playing it again when unmuted.
