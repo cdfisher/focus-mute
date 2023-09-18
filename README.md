@@ -24,7 +24,7 @@ I would suggest either muting music entirely or unselecting the "Mute music" opt
 **This plugin made me die on my PvP only HCIM because I tabbed out and didn't hear that I was getting attacked!**
 
 Why did you think it was a good idea to install this plugin? If this happens to you, please email me at
-*hcim+plugins* *(at)* *cdfisher.com*.
+*plugins+hcim* *(at)* *cdfisher.com*.
 
 For any other support reasons, please make an issue here on GitHub or send an email to *plugins* *(at)* *cdfisher.com* and include
 "Focus Mute" in the subject line.
