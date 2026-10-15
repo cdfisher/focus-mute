@@ -8,13 +8,9 @@ Includes options to affect music, sound effects, and area sounds individually.
 
 ---
 ## FAQ
-**My sounds are messed up after making config changes, what do I do?**
+**How does area-sound muting work?**
 
-Turning off the plugin, logging out, then logging back in before (optionally) re-enabling the plugin should resolve this.
-
-**I turned on the plugin and the game is muted when focused and unmuted when unfocused.**
-
-Clicking between the client and another window one or two times should fix this. Otherwise, try restarting the plugin or relogging.
+While the game canvas is unfocused, the plugin suppresses positional sound events, including your own and other players' mining sounds. Sound effects and area sounds can be enabled independently. Volumes are saved when muting begins and restored when focus returns, the corresponding option is turned off, or the plugin is disabled. Changing options while focused does not mute the game.
 
 **Music doesn't resume seamlessly if I click back to the game.**
 
