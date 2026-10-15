@@ -2,22 +2,17 @@ package com.cdfisher.focusmute;
 
 import com.google.inject.Provides;
 import javax.inject.Inject;
-import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
-import net.runelite.api.GameState;
+import net.runelite.api.events.AreaSoundEffectPlayed;
+import net.runelite.api.events.FocusChanged;
+import net.runelite.api.events.SoundEffectPlayed;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.api.events.FocusChanged;
-import net.runelite.client.callback.ClientThread;
-import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.events.ChatMessage;
 
-
-@Slf4j
 @PluginDescriptor(
 	name = "Focus Mute"
 )
@@ -25,17 +20,13 @@ public class FocusMutePlugin extends Plugin
 {
 	static final String CONFIG_GROUP = "focusmute";
 
-	boolean muteMusic;
-	boolean muteSoundEffects;
-	boolean muteAreaSounds;
+	private boolean focused;
+	private boolean enabled;
 
-	private int musicVolume;
-	private int soundEffectVolume;
-	private int areaSoundEffectVolume;
-
-	private int initialMusicVolume;
-	private int initialSoundEffectVolume;
-	private int initialAreaSoundEffectVolume;
+	// Null means this plugin has not taken ownership of the channel's volume.
+	private Integer musicVolume;
+	private Integer soundEffectVolume;
+	private Integer areaSoundEffectVolume;
 
 	@Inject
 	private Client client;
@@ -47,188 +38,136 @@ public class FocusMutePlugin extends Plugin
 	private FocusMuteConfig config;
 
 	@Override
-	protected void startUp() throws Exception
+	protected void startUp()
 	{
-		log.info("Focus mute started!");
-		loadOptions();
-		// Duplicated from onChatMessage so the game doesn't get muted if it's turned on after logging in
 		clientThread.invoke(() ->
 		{
-			initialMusicVolume = client.getMusicVolume();
-			initialSoundEffectVolume = client.getPreferences().getSoundEffectVolume();
-			initialAreaSoundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
+			enabled = true;
+			focused = client.getCanvas().isFocusOwner();
+			refreshMutes();
 		});
 	}
 
 	@Override
-	protected void shutDown() throws Exception
+	protected void shutDown()
 	{
-		// unmute on shutdown
 		clientThread.invoke(() ->
 		{
-			client.setMusicVolume(initialMusicVolume);
-			client.getPreferences().setSoundEffectVolume(initialSoundEffectVolume);
-			client.getPreferences().setAreaSoundEffectVolume(initialAreaSoundEffectVolume);
+			enabled = false;
+			restoreVolumes();
 		});
 	}
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!CONFIG_GROUP.equals(event.getGroup()))
+		if (CONFIG_GROUP.equals(event.getGroup()))
 		{
-			return;
+			clientThread.invoke(this::refreshMutes);
 		}
-
-		loadOptions();
-		refreshMutes();
-
-/*		//unmute anything that may have been muted
-		if (!muteMusic)
-		{
-			clientThread.invoke(() ->
-			{
-				client.setMusicVolume(initialMusicVolume);
-			});
-		}
-		if (!muteSoundEffects)
-		{
-			clientThread.invoke(() ->
-			{
-				client.getPreferences().setSoundEffectVolume(initialSoundEffectVolume);
-			});
-		}
-		if (!muteAreaSounds)
-		{
-			clientThread.invoke(() ->
-			{
-				client.getPreferences().setAreaSoundEffectVolume(initialAreaSoundEffectVolume);
-			});
-		}*/
 	}
 
-
-
-/*	@Subscribe
-	// Saves initial volume values after player has logged in so they aren't just getting set to zero
-	public void onGameStateChanged(GameStateChanged gameStateChanged)
-	{
-		if (gameStateChanged.getGameState().equals(GameState.LOGGED_IN))
-		{
-			clientThread.invoke(() ->
-			{
-				initialMusicVolume = client.getMusicVolume();
-				initialSoundEffectVolume = client.getPreferences().getSoundEffectVolume();
-				initialAreaSoundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
-			});
-			log.info(String.format("Initial volume values: Music: %d Sounds: %d Area sounds: %d", initialMusicVolume,
-				initialSoundEffectVolume, initialAreaSoundEffectVolume));
-		}
-	}*/
-
 	@Subscribe
-	// Save initial volume values upon getting the "Welcome to RuneScape" chat message"
-	public void onChatMessage(ChatMessage chatMessage)
+	public void onFocusChanged(FocusChanged event)
 	{
-		if (!chatMessage.getType().equals(ChatMessageType.WELCOME)) {
-			return;
-		}
 		clientThread.invoke(() ->
 		{
-			initialMusicVolume = client.getMusicVolume();
-			initialSoundEffectVolume = client.getPreferences().getSoundEffectVolume();
-			initialAreaSoundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
+			focused = event.isFocused();
+			refreshMutes();
 		});
 	}
 
-	private void loadOptions()
+	@Subscribe
+	public void onSoundEffectPlayed(SoundEffectPlayed event)
 	{
-		muteMusic = config.muteMusic();
-		muteSoundEffects = config.muteSoundEffects();
-		muteAreaSounds = config.muteAreaSounds();
+		if (enabled && !focused && config.muteSoundEffects())
+		{
+			event.consume();
+		}
+	}
+
+	@Subscribe
+	public void onAreaSoundEffectPlayed(AreaSoundEffectPlayed event)
+	{
+		// Suppress positional sounds (including our own and other players' mining)
+		// at playback time as well as setting the area's volume preference.
+		if (enabled && !focused && config.muteAreaSounds())
+		{
+			event.consume();
+		}
 	}
 
 	private void refreshMutes()
 	{
-		if (!muteMusic)
+		if (!enabled)
 		{
-			clientThread.invoke(() -> client.setMusicVolume(initialMusicVolume));
+			return;
 		}
-		else
+		if (focused)
 		{
-			clientThread.invoke(() -> {
+			restoreVolumes();
+			return;
+		}
+
+		if (config.muteMusic())
+		{
+			if (musicVolume == null)
+			{
 				musicVolume = client.getMusicVolume();
-				client.setMusicVolume(0);
-			});
+			}
+			client.setMusicVolume(0);
 		}
-		if (!muteSoundEffects)
+		else if (musicVolume != null)
 		{
-			client.getPreferences().setSoundEffectVolume(initialSoundEffectVolume);
+			client.setMusicVolume(musicVolume);
+			musicVolume = null;
 		}
-		else
+
+		if (config.muteSoundEffects())
 		{
-			clientThread.invoke(() -> {
+			if (soundEffectVolume == null)
+			{
 				soundEffectVolume = client.getPreferences().getSoundEffectVolume();
-				client.getPreferences().setSoundEffectVolume(0);
-			});
+			}
+			client.getPreferences().setSoundEffectVolume(0);
 		}
-		if (!muteAreaSounds)
+		else if (soundEffectVolume != null)
 		{
-			client.getPreferences().setAreaSoundEffectVolume(initialAreaSoundEffectVolume);
+			client.getPreferences().setSoundEffectVolume(soundEffectVolume);
+			soundEffectVolume = null;
 		}
-		else
+
+		if (config.muteAreaSounds())
 		{
-			clientThread.invoke(() -> {
-				soundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
-				client.getPreferences().setAreaSoundEffectVolume(0);
-			});
+			if (areaSoundEffectVolume == null)
+			{
+				areaSoundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
+			}
+			client.getPreferences().setAreaSoundEffectVolume(0);
+		}
+		else if (areaSoundEffectVolume != null)
+		{
+			client.getPreferences().setAreaSoundEffectVolume(areaSoundEffectVolume);
+			areaSoundEffectVolume = null;
 		}
 	}
 
-	@Subscribe
-	public void onFocusChanged(FocusChanged focusChanged)
+	private void restoreVolumes()
 	{
-		if (focusChanged.isFocused())
+		if (musicVolume != null)
 		{
-			// unmute
-			clientThread.invoke(() ->
-			{
-				if (muteMusic)
-				{
-					client.setMusicVolume(musicVolume);
-				}
-				if (muteSoundEffects)
-				{
-					client.getPreferences().setSoundEffectVolume(soundEffectVolume);
-				}
-				if (muteAreaSounds)
-				{
-					client.getPreferences().setAreaSoundEffectVolume(areaSoundEffectVolume);
-				}
-
-			});
+			client.setMusicVolume(musicVolume);
+			musicVolume = null;
 		}
-		else
+		if (soundEffectVolume != null)
 		{
-			// mute
-			clientThread.invoke(() ->
-			{
-				if (muteMusic)
-				{
-					musicVolume = client.getMusicVolume();
-					client.setMusicVolume(0);
-				}
-				if (muteSoundEffects)
-				{
-					soundEffectVolume = client.getPreferences().getSoundEffectVolume();
-					client.getPreferences().setSoundEffectVolume(0);
-				}
-				if (muteAreaSounds)
-				{
-					areaSoundEffectVolume = client.getPreferences().getAreaSoundEffectVolume();
-					client.getPreferences().setAreaSoundEffectVolume(0);
-				}
-			});
+			client.getPreferences().setSoundEffectVolume(soundEffectVolume);
+			soundEffectVolume = null;
+		}
+		if (areaSoundEffectVolume != null)
+		{
+			client.getPreferences().setAreaSoundEffectVolume(areaSoundEffectVolume);
+			areaSoundEffectVolume = null;
 		}
 	}
 
